@@ -8,6 +8,7 @@ Hanzo Kata is the autonomous coding agent and self-healing CI/CD triage loop:
 
 - **Cloud Endpoint:** `POST https://api.hanzo.ai/v1/chat/completions`
 - **Models:** `zen5-coder`, `zen`, `enso-pro`
+- **System Card:** [Autonomous Agent Architecture & Benchmarks](MODEL_CARD.md)
 - **Docs:** [docs.hanzo.ai](https://docs.hanzo.ai)
 
 ---
