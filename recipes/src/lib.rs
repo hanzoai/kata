@@ -85,6 +85,180 @@ impl KataAgentLoopRecipe {
     }
 }
 
+/// Target backend for `hybrid/auto` Virtual Model routing inside Kata microVMs and host orchestrators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendTarget {
+    /// Local inference engine (e.g. `qwen3.8-27b` running in `llama.cpp`).
+    Local,
+    /// Remote frontier cloud backend (e.g. `enso-pro`, `moonshotai/kimi-k3.1-pro`, `glm-5.3`).
+    Remote,
+}
+
+/// Host or microVM load snapshot for `hybrid/auto` congestion-aware routing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MachineLoad {
+    /// Normalized 1-minute CPU load (0.0 ..= 1.0+).
+    pub cpu_load: f64,
+    /// Normalized memory/VRAM pressure (0.0 ..= 1.0).
+    pub memory_pressure: f64,
+    /// Active local `llama.cpp` / microVM inference slots in flight.
+    pub active_local_requests: u32,
+}
+
+impl MachineLoad {
+    /// Effective load factor in `[0.0, 1.0]`.
+    pub fn effective_load(&self) -> f64 {
+        let base = self.cpu_load.max(self.memory_pressure * 0.85);
+        let queue_penalty = (self.active_local_requests as f64) * 0.20;
+        (base + queue_penalty).clamp(0.0, 1.0)
+    }
+}
+
+/// Virtual Model (`hybrid/auto`) configuration for Kata agent recipes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualModelRouter {
+    pub virtual_model: String,
+    pub local_model: String,
+    pub local_endpoint: String,
+    pub remote_model: String,
+    pub remote_fallback_model: String,
+    pub congestion_threshold: f64,
+    pub busy_threshold: f64,
+    pub complexity_threshold: f64,
+}
+
+impl Default for VirtualModelRouter {
+    fn default() -> Self {
+        Self {
+            virtual_model: "hybrid/auto".into(),
+            local_model: "qwen3.8-27b".into(),
+            local_endpoint: "http://127.0.0.1:8080/v1".into(),
+            remote_model: "enso-pro".into(),
+            remote_fallback_model: "moonshotai/kimi-k3.1-pro".into(),
+            congestion_threshold: 0.75,
+            busy_threshold: 0.50,
+            complexity_threshold: 0.45,
+        }
+    }
+}
+
+/// Routing verdict produced by [`VirtualModelRouter::route`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HybridRouteDecision {
+    pub requested_model: String,
+    pub target: BackendTarget,
+    pub resolved_model: String,
+    pub skipped_classifier: bool,
+    pub complexity_score: f64,
+    pub effective_load: f64,
+    pub reason: String,
+}
+
+impl VirtualModelRouter {
+    /// Returns true if `model` is a virtual hybrid model (`hybrid/auto`, `hybrid`, `enso-hybrid`, `zen-hybrid`).
+    pub fn is_virtual_model(model: &str) -> bool {
+        matches!(
+            model.trim().to_ascii_lowercase().as_str(),
+            "hybrid/auto" | "hybrid" | "enso-hybrid" | "zen-hybrid" | "hanzo/hybrid"
+        )
+    }
+
+    /// Estimate query complexity in `[0.0, 1.0]` when `llama.cpp` Classifier API score is not pre-supplied.
+    pub fn classify_complexity(prompt: &str) -> f64 {
+        let lower = prompt.to_ascii_lowercase();
+        let words = lower.split_whitespace().count();
+        let mut score: f64 = match words {
+            0..=15 => 0.15,
+            16..=60 => 0.30,
+            61..=180 => 0.50,
+            _ => 0.70,
+        };
+        for kw in [
+            "architecture",
+            "distributed",
+            "consensus",
+            "refactor",
+            "multi-file",
+            "deadlock",
+            "race condition",
+            "security audit",
+            "formal verification",
+            "migration",
+            "scalability",
+        ] {
+            if lower.contains(kw) {
+                score += 0.25;
+            }
+        }
+        score.clamp(0.0, 1.0)
+    }
+
+    /// Route a query across local (`qwen3.8-27b` in `llama.cpp`) and remote (`enso-pro` / `kimi-k3.1-pro`).
+    ///
+    /// When the machine is heavily congested (`effective_load >= congestion_threshold`), skips the
+    /// local classifier step entirely and goes straight to the remote model.
+    pub fn route(
+        &self,
+        prompt: &str,
+        load: MachineLoad,
+        classifier_score: Option<f64>,
+    ) -> HybridRouteDecision {
+        let eff = load.effective_load();
+        if eff >= self.congestion_threshold {
+            return HybridRouteDecision {
+                requested_model: self.virtual_model.clone(),
+                target: BackendTarget::Remote,
+                resolved_model: self.remote_model.clone(),
+                skipped_classifier: true,
+                complexity_score: 1.0,
+                effective_load: eff,
+                reason: format!(
+                    "machine congested (load {:.2} >= {:.2}): skipped local classifier, routed straight to remote {}",
+                    eff, self.congestion_threshold, self.remote_model
+                ),
+            };
+        }
+
+        let complexity = classifier_score
+            .map(|s| s.clamp(0.0, 1.0))
+            .unwrap_or_else(|| Self::classify_complexity(prompt));
+        let threshold = if eff >= self.busy_threshold {
+            (self.complexity_threshold * 0.65).max(0.20)
+        } else {
+            self.complexity_threshold
+        };
+
+        if complexity >= threshold {
+            HybridRouteDecision {
+                requested_model: self.virtual_model.clone(),
+                target: BackendTarget::Remote,
+                resolved_model: self.remote_model.clone(),
+                skipped_classifier: false,
+                complexity_score: complexity,
+                effective_load: eff,
+                reason: format!(
+                    "complexity {:.2} >= threshold {:.2} (load {:.2}): routed to remote {}",
+                    complexity, threshold, eff, self.remote_model
+                ),
+            }
+        } else {
+            HybridRouteDecision {
+                requested_model: self.virtual_model.clone(),
+                target: BackendTarget::Local,
+                resolved_model: self.local_model.clone(),
+                skipped_classifier: false,
+                complexity_score: complexity,
+                effective_load: eff,
+                reason: format!(
+                    "simple query (complexity {:.2} < threshold {:.2}, load {:.2}): stayed local on {}",
+                    complexity, threshold, eff, self.local_model
+                ),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +300,44 @@ mod tests {
             }
             _ => panic!("Expected EscalateToHuman when attempts are exhausted"),
         }
+    }
+
+    #[test]
+    fn test_virtual_model_hybrid_auto_routing() {
+        let router = VirtualModelRouter::default();
+        assert!(VirtualModelRouter::is_virtual_model("hybrid/auto"));
+        assert!(VirtualModelRouter::is_virtual_model("enso-hybrid"));
+
+        // 1. Simple question on idle machine -> stays local (Qwen 3.8 27B)
+        let idle = MachineLoad {
+            cpu_load: 0.15,
+            memory_pressure: 0.20,
+            active_local_requests: 0,
+        };
+        let simple = router.route("what is the git command to squash commits?", idle, None);
+        assert_eq!(simple.target, BackendTarget::Local);
+        assert_eq!(simple.resolved_model, "qwen3.8-27b");
+        assert!(!simple.skipped_classifier);
+
+        // 2. Tricky architecture problem on idle machine -> goes remote (enso-pro)
+        let arch = router.route(
+            "design a multi-file distributed consensus architecture with formal verification and race condition analysis",
+            idle,
+            None,
+        );
+        assert_eq!(arch.target, BackendTarget::Remote);
+        assert_eq!(arch.resolved_model, "enso-pro");
+        assert!(!arch.skipped_classifier);
+
+        // 3. Heavily congested machine -> skips local classifier and goes straight to remote
+        let congested = MachineLoad {
+            cpu_load: 0.88,
+            memory_pressure: 0.70,
+            active_local_requests: 2,
+        };
+        let bypassed = router.route("what is 2 + 2?", congested, None);
+        assert_eq!(bypassed.target, BackendTarget::Remote);
+        assert_eq!(bypassed.resolved_model, "enso-pro");
+        assert!(bypassed.skipped_classifier);
     }
 }
