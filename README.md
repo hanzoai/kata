@@ -50,7 +50,17 @@ python3 examples/python/coding_agent.py
 
 ---
 
-## Production Rust Recipes
+## Workspace Crates
+
+### 1. Durable Agent Harness (`kata-agent/`)
+
+[`kata-agent/`](kata-agent/) provides Hanzo's minimal, malleable, crash-resilient Rust agent harness:
+- **Pluggable `Storage` + Conformance Suite**: `MemoryStorage`, `JsonlStorage`, and WAL-backed `SqliteStorage` keeping only the active working set in memory.
+- **Pluggable `ExecutionEnv`**: `LocalExecutionEnv` and `MemoryExecutionEnv` per conversation/tool call.
+- **Crash Recovery (`Harness::resume`) & `request_id` Idempotency**: Checkpointed `ModelCall` and `ToolCall` tasks with `ReplayPolicy` (`Safe` vs `Interrupt`) plus exactly-once `SubmissionInput::with_request_id`.
+- **Concurrent Conversations, O(1) CoW `fork`, & 3-Tier `Ownership`**: Shared lineage forks without copying history, `Ownership` (`Task`, `Conversation`, `Ownerless`) abort cascades, `WhenBusy` (`Queue` / `Steer`), versioned `DocSpec<T>` (`AsOf`), `compact` / `reset_with_handoff` + `search_history`, `CodingTools`, `wrap_tool` middleware, and durable `memo`.
+
+### 2. Autonomous Triage Recipes (`recipes/`)
 
 [`recipes/`](recipes/): Modular state machine and repair loop for Rust services:
 - **`KataAgentLoopRecipe`**: Self-healing test-and-repair state machine that ingests failing compiler/test output and generates unified diffs.
