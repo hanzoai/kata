@@ -1,5 +1,7 @@
 # Hanzo Kata
 
+[![Open in Hanzo](https://hanzo.app/badges/open-in-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/kata&ref=main&action=open) [![Edit with Hanzo](https://hanzo.app/badges/edit-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/kata&ref=main&action=edit)
+
 Hanzo Kata is the autonomous coding agent and self-healing CI/CD triage loop:
 1. Ingest compiler errors, lint warnings, or test failures from terminal output or CI logs.
 2. Search repository AST and dependency graphs for the root cause.
