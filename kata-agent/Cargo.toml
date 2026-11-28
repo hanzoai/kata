@@ -5,6 +5,10 @@ edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "Durable, minimal, malleable Rust agent harness with pluggable storage, execution environments, crash recovery, CoW forks, and idempotent submissions."
 
+[[bin]]
+name = "kata"
+path = "src/bin/kata.rs"
+
 [dependencies]
 async-trait = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
