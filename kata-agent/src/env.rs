@@ -102,11 +102,19 @@ impl ExecutionEnv for LocalExecutionEnv {
         if cancel.is_cancelled() {
             return Err(KataError::Aborted);
         }
-        let mut cmd = Command::new("/bin/sh");
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(&self.cwd)
-            .kill_on_drop(true);
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(command);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = Command::new("/bin/sh");
+            c.arg("-c").arg(command);
+            c
+        };
+        cmd.current_dir(&self.cwd).kill_on_drop(true);
         let child = cmd.output();
         let out = match timeout {
             Some(limit) => tokio::select! {

@@ -3,6 +3,7 @@
 pub mod env;
 pub mod harness;
 pub mod model;
+pub mod repair;
 pub mod storage;
 pub mod tools;
 
@@ -20,9 +21,7 @@ pub use storage::{
     SqliteStorage, Storage, SubmissionRecord, SubmissionStatus, TaskKind, TaskRecord, TaskStatus,
     TranscriptEntry, WhenBusy,
 };
-pub use tools::{
-    CodingTools, Tool, ToolContext, ToolDef, ToolOutput, ToolRegistry, ToolWrapper,
-};
+pub use tools::{CodingTools, Tool, ToolContext, ToolDef, ToolOutput, ToolRegistry, ToolWrapper};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KataError {

@@ -83,3 +83,14 @@ let state = CodingTriageState {
 
 let prompt = KataAgentLoopRecipe::build_patch_prompt(&state);
 ```
+
+---
+
+## Quickstart: Closed-Loop Repair (`kata run`)
+
+Run the self-healing Detect -> Triage -> Synthesize -> Verify smoke fixture locally against the [`examples/fixtures/broken_math/`](examples/fixtures/broken_math/) test suite:
+
+```bash
+cargo test --workspace
+cargo run -p kata-agent --bin kata -- run
+```
